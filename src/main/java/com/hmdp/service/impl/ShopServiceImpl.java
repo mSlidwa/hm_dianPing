@@ -17,6 +17,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * <p>
@@ -105,6 +106,5 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //将redis缓存中的该数据删除
         stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY+shop.getId());
     }
-
 
 }
