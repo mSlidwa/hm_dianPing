@@ -30,4 +30,6 @@ public class VoucherOrderController {
         Result result=iVoucherOrderService.seckillVoucher(voucherId);
         return result;
     }
+
+
 }

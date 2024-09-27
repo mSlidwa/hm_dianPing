@@ -10,9 +10,12 @@ import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +35,17 @@ import java.time.LocalDateTime;
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
     @Autowired
     private ISeckillVoucherService iSeckillVoucherService;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    private RedisIdWorker redisIdWorker;
+    /**
+     *  优惠券秒杀
+     * @param voucherId
+     * @return
+     */
     @Override
     public Result seckillVoucher(Long voucherId) {
         //查找是否存在该券
@@ -42,10 +56,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("未查到代金券信息");
         }
         //查看该券是否在可使用时间范围内
-        if(LocalDateTime.now().isAfter(one.getBeginTime())){
+        if(LocalDateTime.now().isBefore(one.getBeginTime())){
             return Result.fail("代金券暂未开放购买");
         }
-        if (LocalDateTime.now().isBefore(one.getEndTime())){
+        if (LocalDateTime.now().isAfter(one.getEndTime())){
             return Result.fail("活动已结束");
         }
         //查看该券库存是否充足
@@ -53,9 +67,17 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("库存不足");
         }
         Result result=null;
-        //调用方法实现库存减少并生成订单（利用乐观锁避免商品超卖）
-        synchronized (UserHolder.getUser().getId().toString().intern()) {
-            result = StockReduceAndGetOrder(voucherId);
+        //实现一人一单
+        SimpleRedisLock simpleRedisLock = new SimpleRedisLock(stringRedisTemplate);
+        if (!simpleRedisLock.tryLock(100)) {
+            return Result.fail("只能购买一次");
+        }
+        try{ //调用方法实现库存减少并生成订单（利用乐观锁避免商品超卖
+            VoucherOrderServiceImpl x=(VoucherOrderServiceImpl)AopContext.currentProxy();
+            result = x.StockReduceAndGetOrder(voucherId);
+            return result;
+        }catch (Exception e){
+            simpleRedisLock.unLock();
         }
         return result;
     }
@@ -73,12 +95,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                 .setSql("stock=stock-1")
                 .gt("stock", 0)
                 .eq("voucher_id", voucherId).update();
-        if (update){
+        if (!update){
             return Result.fail("库存不足");
         }
         //库存减量成功，插入订单
         VoucherOrder voucherOrder = new VoucherOrder();
-        Long voucherOrderId=RedisIdWorker.nextId(voucherId.toString());
+        Long voucherOrderId=redisIdWorker.nextId(voucherId.toString());
         voucherOrder.setId(voucherOrderId);
         voucherOrder.setVoucherId(voucherId);
         voucherOrder.setUserId(id);

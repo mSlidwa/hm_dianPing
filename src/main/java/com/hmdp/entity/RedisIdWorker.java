@@ -13,9 +13,9 @@ import java.time.format.DateTimeFormatter;
 public class RedisIdWorker {
     private static final long BEGIN_TIMETIMESTAMP = 1640995200L;
    @Autowired
-    private static StringRedisTemplate redisTemplate;
+    private StringRedisTemplate redisTemplate;
 
-    public static long nextId(String keyPrefix){
+    public long nextId(String keyPrefix){
         //1.生成时间戳31魏
         LocalDateTime now = LocalDateTime.now();
         long epochSecond = now.toEpochSecond(ZoneOffset.UTC);
