@@ -55,6 +55,9 @@ public class SimpleRedisLock {
 //            stringRedisTemplate.delete(key);
 //        }
 //    }
+    /**
+     * 调用stringRedisTemplate.execute方法执行lua脚本
+     */
     public void unLock(){
        stringRedisTemplate.execute(UNLOCK_SCRIPT,
                Collections.singletonList(LOCK+UserHolder.getUser().getId()),

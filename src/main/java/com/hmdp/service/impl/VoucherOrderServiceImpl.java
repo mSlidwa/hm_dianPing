@@ -77,6 +77,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             result = x.StockReduceAndGetOrder(voucherId);
             return result;
         }catch (Exception e){
+            log.error("eeee");
+        }finally {
             simpleRedisLock.unLock();
         }
         return result;
