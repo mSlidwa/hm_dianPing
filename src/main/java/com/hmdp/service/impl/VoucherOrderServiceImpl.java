@@ -1,14 +1,20 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.ObjectUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.RedisIdWorker;
+import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import jodd.util.CollectionUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -16,10 +22,11 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.annotation.PostConstruct;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.*;
 
 /**
  * <p>
@@ -30,6 +37,7 @@ import java.util.concurrent.BlockingQueue;
  * @since 2021-12-22
  */
 
+@Slf4j
 //dev1测试
 @Service
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
@@ -49,14 +57,49 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //ClassPathResource就是默认的resource文件，这里指定寻找路径
         SECKILL_SCRIPT.setLocation(new ClassPathResource("addOrder.lua"));
     }
+//    创建线程池
+    private static  final ThreadPoolExecutor threadPool = new ThreadPoolExecutor(5, 10, 100, TimeUnit.SECONDS, new LinkedBlockingQueue<>(10));
+//    轮回执行
+    @PostConstruct//当前类初始化完毕后执行
+    private void init(){
+        threadPool.submit(new VoucherOrderHandler());
+    }
 //     阻塞队列
     private BlockingQueue<VoucherOrder> blockingQueue=new ArrayBlockingQueue<>(1024*1024);
+   private class VoucherOrderHandler implements Runnable{
+
+       @Override
+       public void run() {
+           while (true){
+               try {
+                   //获取队列信息
+                   VoucherOrder take = blockingQueue.take();
+                   handlerOrder(take);
+               } catch (Exception e) {
+                   log.error("处理订单异常");
+               }
+           }
+       }
+   }
+
+    private void handlerOrder(VoucherOrder take) {
+        SimpleRedisLock simpleRedisLock = new SimpleRedisLock(stringRedisTemplate);
+
+        try{ //调用方法实现库存减少并生成订单（利用乐观锁避免商品超卖
+            x.StockReduceAndGetOrder(take);
+        }catch (Exception e){
+            log.error("eeee");
+        }finally {
+            simpleRedisLock.unLock();
+        }
+    }
 
     /**
      *  同步判断
      * @param voucherId
      * @return 生成订单Id
      */
+    private VoucherOrderServiceImpl x;
     @Override
     public Result seckillVoucher(Long voucherId) {
         Long id = UserHolder.getUser().getId();
@@ -77,6 +120,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         voucherOrder.setVoucherId(voucherId);
         voucherOrder.setUserId(id);
         blockingQueue.add(voucherOrder);
+
+        //        获取代理对象
+        x=(VoucherOrderServiceImpl) AopContext.currentProxy();
         //返回订单id
         return Result.ok(orderId);
     }
@@ -151,6 +197,27 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         save(voucherOrder);
         //返回生成订单ID
         return Result.ok(voucherOrderId);
+    }
+
+    @Transactional
+    public void StockReduceAndGetOrder(VoucherOrder voucher) {
+        //判断当前用户是否拥有订单
+        Long id = voucher.getUserId();
+        Integer count = query().eq("user_id", id).eq("voucher_Id", voucher.getVoucherId()).count();
+        if (count>0){
+            log.error("已有订单");
+            return;
+        }
+        //尝试减少库存，利用版本号stock判断数据是否在操作前被修改
+        boolean update = iSeckillVoucherService.update()
+                .setSql("stock=stock-1")
+                .gt("stock", 0)
+                .eq("voucher_id", voucher.getVoucherId()).update();
+        if (!update){
+            log.error("库存不足");
+        }
+        //库存减量成功，插入订单
+        save(voucher);
     }
 
 

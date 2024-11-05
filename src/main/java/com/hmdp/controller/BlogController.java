@@ -43,7 +43,7 @@ public class BlogController {
         return Result.ok(blog.getId());
     }
 
-    @PutMapping("/like/{id}")
+    @PutMapping(path = "/like/{id}")
     public Result likeBlog(@PathVariable("id") Long id) {
         // 修改点赞数量
         blogService.update()
