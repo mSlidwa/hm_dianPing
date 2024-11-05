@@ -2,9 +2,12 @@ package com.hmdp.utils;
 
 
 import cn.hutool.core.util.RandomUtil;
+import lombok.var;
 import org.springframework.util.DigestUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class PasswordEncoder {
 
